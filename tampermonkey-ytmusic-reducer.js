@@ -4,7 +4,6 @@
 // @version      1
 // @description  Automatically skips songs which have been thumbed down or reduced in play.
 // @author       theyak
-// @homepage     https://github.com/theyak/ytmusic-reducer
 // @match        https://music.youtube.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -21,8 +20,11 @@
 // A lot of code contained here-in is from web-scrobbler.
 
 // TODO: Can we somehow get reducer value into playlist?
-// TODO: Clicking play on a playlist from homepage doesn't trigger the new track name event
 // TODO: Not all track titles seem to be working. Figure that out.
+// TODO: Merge
+// TODO: Fix bug where if you set track to 100% in list you can no longer reduce because it's been deleted. Maybe only update on save?
+
+const skipInterval = 25;
 
 const artistSelectors = [
     // Base selector, combining both new and old
@@ -96,6 +98,28 @@ function queryElements(selectors) {
 }
 
 /**
+ * A not so string hashing function, but good enough for our purposes.
+ *
+ * @param  {String}
+ * @param  {int}
+ * @return {String}
+ */
+const cyrb53 = (str, seed = 0) => {
+    let h1 = 0xdeadbeef ^ seed;
+    let h2 = 0x41c6ce57 ^ seed;
+    for (let i = 0, ch; i < str.length; i++) {
+        ch = str.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+};
+
+/**
  * Inject a stylesheet into the head of the application.
  *
  * @param  {String} URL of external stylesheet
@@ -166,6 +190,30 @@ const getTrackId = () => {
 };
 
 /**
+ * Get ID of current artist
+ *
+ * @return {String|Boolean} Artist ID, false if not found.
+ */
+const getArtistId = () => {
+    const byline = queryElements(".middle-controls .byline");
+    if (!byline) {
+        return false;
+    }
+
+    // It's most likely the first A tag
+    const elements = byline.getElementsByTagName("A");
+    for (let el of elements) {
+        const href = el.getAttribute("href");
+        if (href.indexOf("channel") === 0) {
+            return href.slice(8);
+        }
+    }
+
+    // Believe it or not, not all artists have an ID. We'll make one based on name.
+    return cyrb53(getTrackArtist());
+}
+
+/**
  * Check if currently playing a track
  *
  * @return {Boolean}
@@ -188,6 +236,11 @@ function isPlaying() {
     }
 }
 
+/**
+ * Display message to user
+ *
+ * @param  {String} text
+ */
 function setStatusText(text) {
     Toastify({
         text,
@@ -203,7 +256,7 @@ function setStatusText(text) {
     }).showToast();
 }
 
-const currentTrack = {
+let currentTrack = {
     id: null,
     title: null,
     artist: null,
@@ -307,7 +360,7 @@ function displayReducers() {
             }
 
             const keyPath = `reducers[${data.num}].value`;
-            value += 25;
+            value += skipInterval;
             if (value >= 100) {
                 value = 100;
                 delete reducers[data.id];
@@ -325,12 +378,15 @@ function displayReducers() {
             }
 
             let value = parseInt(reducer.value);
-            if (value <= 25) {
+            if (value <= skipInterval && reducer.title !== "*") {
+                return;
+            }
+            if (value <= 0) {
                 return;
             }
 
             const keyPath = `reducers[${data.num}].value`;
-            value -= 25;
+            value -= skipInterval;
             this.set(keyPath, value);
 
             reducer.value = value;
@@ -404,21 +460,65 @@ function displayReducers() {
     }
 
     /**
+     * Get the currently active track information.
+     *
+     * @return {Object}
+     */
+    function getCurrentTrack() {
+        return {
+            id: getTrackId(),
+            title: getTrackTitle(),
+            artist: getTrackArtist(),
+        }
+    }
+
+    /**
      * Reduce the probability of playing the current track for future plays.
      */
-    function reduce() {
-        let value = "100";
-        if (reducers[currentTrack.id]) {
-            value = reducers[currentTrack.id].value;
+    function reduce(e) {
+        currentTrack = getCurrentTrack();
+
+        // Artist reducer
+        if (e.ctrlKey || e.metaKey) {
+            const id = getArtistId();
+            if (!id) {
+                setStatusText(`Unable to find Artist ID for ${currentTrack.artist}.`);
+                return false;
+            }
+
+            let value = 100;
+            if (reducers[id]) {
+                value = parseInt(reducers[id].value);
+                value -= skipInterval;
+                if (value < 0) {
+                    value = 0;
+                }
+                reducers[id].value = value;
+            } else {
+                value -= skipInterval;
+                reducers[id] = {
+                    id,
+                    title: "*",
+                    artist: currentTrack.artist,
+                    value,
+                }
+            }
+
+            GM_setValue("reducers", JSON.stringify(reducers));
+            setStatusText(`${currentTrack.artist} will play ${value}% of the time.`);
+            return;
         }
 
-        if (value === "75") {
-            value = "50";
-        } else if (value === "50") {
-            value = "25";
-        } else if (value !== "25") {
-            value = "75";
+        let value = 100;
+        if (reducers[currentTrack.id]) {
+            value = parseInt(reducers[currentTrack.id].value);
         }
+
+        if (value <= skipInterval) {
+            return;
+        }
+
+        value -= skipInterval;
 
         reducers[currentTrack.id] = {
             id: currentTrack.id,
@@ -435,16 +535,37 @@ function displayReducers() {
     /**
      * Increase the probability of playing the current track for future plays.
      */
-    function increase() {
-        if (reducers[currentTrack.id]) {
-            let value = reducers[currentTrack.id].value;
-            if (value === "25") {
-                value = "50";
-            } else if (value === "50") {
-                value = "75";
+    function increase(e) {
+        currentTrack = getCurrentTrack();
+
+        if (e.ctrlKey || e.metaKey) {
+            const id = getArtistId();
+            if (!reducers[id]) {
+                return;
+            }
+
+            let value = parseInt(reducers[id].value);
+            value += skipInterval;
+            if (value >= 100) {
+                value = 100;
+                delete reducers[id];
             } else {
-                value = "100";
+                reducers[id].value = value;
+            }
+
+            GM_setValue("reducers", JSON.stringify(reducers));
+            setStatusText(`${currentTrack.artist} will play ${value}% of the time.`);
+            return;
+        }
+
+        if (reducers[currentTrack.id]) {
+            let value = parseInt(reducers[currentTrack.id].value)
+            value += skipInterval;
+            if (value >= 100) {
+                value = 100;
                 delete reducers[currentTrack.id];
+            } else {
+                reducers[currentTrack.id] = value;
             }
             GM_setValue("reducers", JSON.stringify(reducers));
             setStatusText(`${currentTrack.title} (${currentTrack.id}) will play ${value}% of the time.`);
@@ -466,6 +587,8 @@ function displayReducers() {
             increase();
         } else if (last4 === "rent") {
             setStatusText(JSON.stringify(currentTrack));
+        } else if (last4 === "tist") {
+            setStatusText(getArtistId());
         }
     });
 
@@ -484,6 +607,7 @@ function displayReducers() {
      * Here's our magic function that checks the current status of the song.
      * If the song is thumbed down, then it will be skipped.
      * If the song is associated with a reducer, it has a potential of being skipped.
+     * If the song's artist is associated with an artist reducer, it has a potential of being skipped.
      *
      * @return  {Boolean} true if song is skipped.
      */
@@ -519,6 +643,18 @@ function displayReducers() {
                 return true;
             }
         } else {
+            // Check for artist reduction
+            const artistId = getArtistId();
+            if (reducers[artistId]) {
+                const value = parseInt(reducers[artistId].value);
+                const probability = value / 100;
+                if (Math.random() > probability) {
+                    setStatusText(`Skipping ${currentTrack.title} due to a ${100 - value}% probability of artist being skipped.`);
+                    clickNext();
+                    return true;
+                }
+            }
+
             reducedValueEl.innerText = "100%";
         }
 
@@ -533,7 +669,8 @@ function displayReducers() {
      *
      * Problem: Doesn't catch first song if player bar doesn't appear.
      * This can be replication by clicking play on any of the playlists
-     * when first loading the page.
+     * when first loading the page. Clicking the up/down arrows to
+     * reduce/increase probability of playing will still work.
      *
      * @param  {Element} Element to observe. Title element in our case.
      */
@@ -552,7 +689,9 @@ function displayReducers() {
                 if (id && id !== currentTrack.id) {
                     currentTrack.id = id;
                     const skipped = checkSkip();
-                    if (!skipped) {
+
+                    // Use this to test that track information is being updated properly.
+                    if (!skipped && false) {
                         setStatusText(`${currentTrack.title} - ${currentTrack.artist}`);
                     }
                 }
