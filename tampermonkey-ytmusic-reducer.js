@@ -211,6 +211,11 @@ const getTrackId = () => {
  * @return {String|Boolean} Artist ID, false if not found.
  */
 const getArtistId = () => {
+    if (window.location.href.indexOf("channel") > 0) {
+        const urlParts = window.location.href.split("/");
+        return urlParts[urlParts.length - 1];
+    }
+
     const byline = queryElements(".middle-controls .byline");
     if (!byline) {
         return false;
@@ -227,6 +232,20 @@ const getArtistId = () => {
 
     // Believe it or not, not all artists have an ID. We'll make one based on name.
     return cyrb53(getTrackArtist());
+}
+
+/**
+ * Get artist name from artist page or current playing track
+ */
+const getArtist = () => {
+    if (window.location.href.indexOf("channel") > 0) {
+        const el = queryElements("#header .title");
+        if (el) {
+            return el.innerText.trim();
+        }
+    }
+
+    return getTrackArtist();
 }
 
 /**
@@ -427,6 +446,14 @@ function displayReducers() {
     let last4 = "    ";
     let reducedValueEl = null;
 
+    // Load previously saved reducers.
+    reducers = GM_getValue("reducers");
+    if (!reducers) {
+        reducers = {};
+    } else {
+        reducers = JSON.parse(reducers);
+    }
+
     const player = document.getElementsByTagName("ytmusic-player-bar")[0];
     if (!player) {
         console.log("Could not find Youtube player control.");
@@ -435,13 +462,16 @@ function displayReducers() {
 
     /**
      * Adds the up and down chevrons to the track component.
+     *
+     * @param  {Element} Element to place control after
+     * @param  {String} Type of reducer, artist or track.
      */
-    function appendReducers() {
-        const el = document.getElementById("like-button-renderer");
-
-        const newIcon = document.createElement("div");
-        newIcon.style.padding = "8px 0px 8px 16px";
-        newIcon.style.outline = "none";
+    function appendReducers(el, type) {
+        const control = document.createElement("div");
+        control.style.padding = "8px 0px 8px 16px";
+        control.style.outline = "none";
+        control.reducerType = type;
+        control.className = `reducer-control reducer-${type}`;
 
         const wrapper = document.createElement("div");
         wrapper.style.display = "flex";
@@ -456,13 +486,14 @@ function displayReducers() {
         wrapper.appendChild(up);
 
         // Label
-        reducedValueEl = document.createElement("div");
-        reducedValueEl.style.fontSize = "10px";
-        reducedValueEl.style.color = "#aaaaaa";
-        reducedValueEl.style.cursor = "pointer";
-        reducedValueEl.innerText = "100%";
-        reducedValueEl.addEventListener("click", displayReducers);
-        wrapper.appendChild(reducedValueEl);
+        const value = document.createElement("div");
+        value.className = "reducer-label";
+        value.style.fontSize = "10px";
+        value.style.color = "#aaaaaa";
+        value.style.cursor = "pointer";
+        value.innerText = "100%";
+        value.addEventListener("click", displayReducers);
+        wrapper.appendChild(value);
 
         // Chevron Down
         const down = document.createElement("div");
@@ -471,8 +502,15 @@ function displayReducers() {
         down.addEventListener("click", reduce);
         wrapper.appendChild(down);
 
-        newIcon.appendChild(wrapper);
-        el.after(newIcon);
+        control.appendChild(wrapper);
+        el.after(control);
+
+        control.valueEl = value;
+        control.setValue = function(value) {
+            control.valueEl.innerText = parseInt(value) + "%";
+        }
+
+        return control;
     }
 
     /**
@@ -492,13 +530,14 @@ function displayReducers() {
      * Reduce the probability of playing the current track for future plays.
      */
     function reduce(e) {
-        currentTrack = getCurrentTrack();
+        const control = e.target.closest(".reducer-control");
 
         // Artist reducer
-        if (e.ctrlKey || e.metaKey) {
+        if (control.reducerType === "artist") {
             const id = getArtistId();
+            const artist = getArtist();
             if (!id) {
-                setStatusText(`Unable to find Artist ID for ${currentTrack.artist}.`);
+                setStatusText(`Unable to find artist.`);
                 return false;
             }
 
@@ -515,15 +554,20 @@ function displayReducers() {
                 reducers[id] = {
                     id,
                     title: "*",
-                    artist: currentTrack.artist,
+                    artist,
                     value,
                 }
             }
 
+            control.setValue(value);
+
             GM_setValue("reducers", JSON.stringify(reducers));
-            setStatusText(`${currentTrack.artist} will play ${value}% of the time.`);
+            setStatusText(`${artist} will play ${value}% of the time.`);
             return;
         }
+
+        // Track reducer
+        currentTrack = getCurrentTrack();
 
         let value = 100;
         if (reducers[currentTrack.id]) {
@@ -545,7 +589,7 @@ function displayReducers() {
 
         GM_setValue("reducers", JSON.stringify(reducers));
         setStatusText(`${currentTrack.title} (${currentTrack.id}) will play ${value}% of the time.`);
-        reducedValueEl.innerText = value + "%";
+        control.setValue(value);
     }
 
     /**
@@ -554,8 +598,12 @@ function displayReducers() {
     function increase(e) {
         currentTrack = getCurrentTrack();
 
-        if (e.ctrlKey || e.metaKey) {
+        const control = e.target.closest(".reducer-control");
+
+        // Artist reducer
+        if (control.reducerType === "artist") {
             const id = getArtistId();
+            const artist = getArtist();
             if (!reducers[id]) {
                 return;
             }
@@ -569,8 +617,9 @@ function displayReducers() {
                 reducers[id].value = value;
             }
 
+            control.setValue(value);
             GM_setValue("reducers", JSON.stringify(reducers));
-            setStatusText(`${currentTrack.artist} will play ${value}% of the time.`);
+            setStatusText(`${artist} will play ${value}% of the time.`);
             return;
         }
 
@@ -585,7 +634,7 @@ function displayReducers() {
             }
             GM_setValue("reducers", JSON.stringify(reducers));
             setStatusText(`${currentTrack.title} (${currentTrack.id}) will play ${value}% of the time.`);
-            reducedValueEl.innerText = value + "%";
+            control.setValue(value);
         }
     }
 
@@ -650,7 +699,7 @@ function displayReducers() {
         // Check if song should be reduced in play
         if (reducers[currentTrack.id]) {
             const value = parseInt(reducers[currentTrack.id].value);
-            reducedValueEl.innerText = value + "%";
+            queryElements(".reducer-track").setValue(value);
 
             const probability = value / 100;
             if (Math.random() > probability) {
@@ -671,7 +720,7 @@ function displayReducers() {
                 }
             }
 
-            reducedValueEl.innerText = "100%";
+            queryElements(".reducer-track").setValue(100);
         }
 
         return false;
@@ -680,11 +729,19 @@ function displayReducers() {
 
     /**
      * Event for when location changes. Locations are basically homepage,
-     * playlist, and artist (channel) pages.
+     * playlist, watch, and artist (channel) pages.
      */
     function onLocationChange({lastUrl, currentUrl}) {
         if (currentUrl.indexOf("channel") > 0) {
-            // setStatusText("Switched to artist page");
+            // FInd header actions
+            const el = queryElements("#header .actions .buttons");
+
+            const reducerEl = appendReducers(el, "artist");
+            const artistId = getArtistId();
+
+            if (artistId && reducers[artistId]) {
+                reducerEl.setValue(reducers[artistId].value);
+            }
         }
     }
 
@@ -703,7 +760,7 @@ function displayReducers() {
 
     GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; }`);
     injectStylesheet("https://cdnjs.cloudflare.com/ajax/libs/toastify-js/1.12.0/toastify.css");
-    appendReducers();
+    appendReducers(document.getElementById("like-button-renderer"), "track");
 
 
     /**
@@ -715,10 +772,16 @@ function displayReducers() {
         this.lastTrack = getCurrentTrack();
 
         function waitForTitle() {
-            const currentTrack = getCurrentTrack();
-            if (currentTrack.title) {
-                onTrackChange({lastTrack: this.lastTrack, currentTrack});
-                this.lastTrack = currentTrack;
+            let currentTrack = getCurrentTrack();
+            if (currentTrack && currentTrack.title) {
+                // So, YouTube Music seems to be slow at updating the title sometimes.
+                // If title is the same as last check, wait a second and get the
+                // current track title at that time.
+                setTimeout(() => {
+                    currentTrack = getCurrentTrack();
+                    onTrackChange({lastTrack: this.lastTrack, currentTrack});
+                    this.lastTrack = currentTrack;
+                }, !this.lastTrack || this.lastTrack.title === currentTrack.title ? 500 : 1);
             } else {
                 setTimeout(waitForTitle, 10);
             }
@@ -756,12 +819,4 @@ function displayReducers() {
         onLocationChange({lastUrl: this.lastUrl, currentUrl: window.location.href});
     }
     headerObserver(document.getElementById("header"));
-
-    // Load previously saved reducers.
-    reducers = GM_getValue("reducers");
-    if (!reducers) {
-        reducers = {};
-    } else {
-        reducers = JSON.parse(reducers);
-    }
 })();
