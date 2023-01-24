@@ -45,6 +45,22 @@ const regex = {
 };
 
 /**
+ * Waits for an element to be available in the DOM
+ *
+ * @param  {String|Array} selectors Single selector or array of selectors
+ * @param  {callback} Function to call when element is available
+ * @param  {int} Time in milliseconds to wait between checks
+ */
+function waitForElement(selector, callback, timeout = 10) {
+    const el = queryElements(selector);
+    if (el) {
+        callback(el);
+    } else {
+        setTimeout(() => waitForElement(selector, callback, timeout), timeout);
+    }
+}
+
+/**
  * Return a text value of a first available element. If `selectors` is
  * a string, return the attribute value of an element matching by
  * the selector. If `selectors` is an array, return the attribute value of
@@ -611,7 +627,7 @@ function displayReducers() {
      *
      * @return  {Boolean} true if song is skipped.
      */
-    function checkSkip() {
+    function checkSkip(currentTrack) {
         const like = player.getElementsByClassName("like");
         const dislike = player.getElementsByClassName("dislike");
         let liked = false;
@@ -661,54 +677,85 @@ function displayReducers() {
         return false;
     }
 
+
     /**
-     * Check for change to title, and if change is found, do processing.
-     * I'd prefer to check by ID, since it's possible two songs with the
-     * same title get played in a row, but there were timing issues that
-     * prevented this from working properly.
-     *
-     * Problem: Doesn't catch first song if player bar doesn't appear.
-     * This can be replication by clicking play on any of the playlists
-     * when first loading the page. Clicking the up/down arrows to
-     * reduce/increase probability of playing will still work.
-     *
-     * @param  {Element} Element to observe. Title element in our case.
+     * Event for when location changes. Locations are basically homepage,
+     * playlist, and artist (channel) pages.
      */
-    function setupMutationObserver(el) {
-        // Options for the observer (which mutations to observe)
-        const config = { attributes: true, childList: true, subtree: true };
-
-        // Callback function to execute when mutations are observed
-        const callback = (mutationList, observer) => {
-            const title = getTrackTitle();
-            if (title && currentTrack.title !== title) {
-                currentTrack.title = title;
-                currentTrack.artist = getTrackArtist();
-
-                const id = getTrackId();
-                if (id && id !== currentTrack.id) {
-                    currentTrack.id = id;
-                    const skipped = checkSkip();
-
-                    // Use this to test that track information is being updated properly.
-                    if (!skipped && false) {
-                        setStatusText(`${currentTrack.title} - ${currentTrack.artist}`);
-                    }
-                }
-            }
-        };
-
-        // Create an observer instance linked to the callback function
-        const observer = new MutationObserver(callback);
-
-        // Start observing the target node for configured mutations
-        observer.observe(el, {childList: true});
+    function onLocationChange({lastUrl, currentUrl}) {
+        if (currentUrl.indexOf("channel") > 0) {
+            // setStatusText("Switched to artist page");
+        }
     }
+
+    /**
+     * Event for when a track changes.
+     */
+    function onTrackChange({lastTrack, currentTrack}) {
+        const skipped = checkSkip(currentTrack);
+
+        // Use this to test that track information is being updated properly.
+        if (!skipped) {
+            console.log(currentTrack);
+        }
+    }
+
 
     GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; }`);
     injectStylesheet("https://cdnjs.cloudflare.com/ajax/libs/toastify-js/1.12.0/toastify.css");
     appendReducers();
-    setupMutationObserver(queryElements(".middle-controls .content-info-wrapper .title"));
+
+
+    /**
+     * Observer for track changing. This was a pain to get right and I have no idea
+     * if it's actually correct or not.
+     */
+    function trackIdObserver(el) {
+        this.lastId = null;
+        this.lastTrack = getCurrentTrack();
+
+        function waitForTitle() {
+            const currentTrack = getCurrentTrack();
+            if (currentTrack.title) {
+                onTrackChange({lastTrack: this.lastTrack, currentTrack});
+                this.lastTrack = currentTrack;
+            } else {
+                setTimeout(waitForTitle, 10);
+            }
+        }
+
+        const callback = (mutationList, observer) => {
+            const currentTrack = getCurrentTrack();
+            if (currentTrack.id !== this.lastId) {
+                this.lastId = currentTrack.id;
+                waitForTitle();
+            }
+        }
+        const observer = new MutationObserver(callback);
+        observer.observe(el, {attributes: true});
+    }
+    waitForElement(idSelector, trackIdObserver);
+
+
+    /**
+     * Look for changes in the header, which basically indicates a change of page.
+     */
+    function headerObserver(el) {
+        this.lastUrl = "";
+
+        const callback = (mutationList, observer) => {
+            for (let mutation of mutationList) {
+                if (mutation.addedNodes.length > 0) {
+                    onLocationChange({lastUrl: this.lastUrl, currentUrl: window.location.href});
+                    this.lastUrl = window.location.href;
+                }
+            }
+        }
+        const observer = new MutationObserver(callback);
+        observer.observe(el, {childList: true, subTree: true});
+        onLocationChange({lastUrl: this.lastUrl, currentUrl: window.location.href});
+    }
+    headerObserver(document.getElementById("header"));
 
     // Load previously saved reducers.
     reducers = GM_getValue("reducers");
