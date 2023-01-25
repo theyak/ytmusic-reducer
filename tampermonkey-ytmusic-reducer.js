@@ -14,16 +14,18 @@
 
 /* global Toastify */
 /* global Ractive */
+/* global GM_setValue */
+/* gloabl GM_getValue */
+/* global GM_addStyle */
 
 // This script wouldn't be possible without the awesome Web Scrobbler project.
-// https://github.com/web-scrobbler/web-scrobbler
-// A lot of code contained here-in is from web-scrobbler.
+// https://github.com/web-scrobbler/web-scrobbler.
 
 // TODO: Can we somehow get reducer value into playlist?
 // TODO: Not all track titles seem to be working. Figure that out.
-// TODO: Merge
 
 const skipInterval = 25;
+const dislikedPlayProbability = 0;
 
 const artistSelectors = [
     // Base selector, combining both new and old
@@ -298,7 +300,7 @@ let currentTrack = {
 };
 
 let reducers = {};
-let ractive = null; // The reducer manager window
+let manager = null; // The reducer manager window
 
 /**
  * A super simple modal component that tries to match the YouTube Music theme.
@@ -403,7 +405,7 @@ function YTMModal(text, opts = {}) {
 
 
 const fileImport = (e) => {
-    if (!ractive) {
+    if (!manager) {
         setStatusText("Reducer Manager not open");
         return;
     }
@@ -415,13 +417,13 @@ const fileImport = (e) => {
     // Closure to capture the file information.
     reader.onload = (function(theFile) {
         return function(e) {
-            if (!ractive) {
+            if (!manager) {
                 setStatusText("Reducer Manager not open");
                 return;
             }
 
             const currentReducers = {};
-            for (let reducer of ractive.get("reducers")) {
+            for (let reducer of manager.get("reducers")) {
                 currentReducers[reducer.id] = reducer;
             }
 
@@ -453,8 +455,7 @@ const fileImport = (e) => {
                 currentReducers[reducer.id] = reducer;
             }
 
-            console.log(currentReducers);
-            ractive.set("reducers", Object.values(currentReducers));
+            manager.set("reducers", Object.values(currentReducers));
         };
     })(file);
 
@@ -481,7 +482,7 @@ function displayReducers() {
     const body = document.getElementsByTagName("body")[0];
     body.appendChild(modal);
 
-    ractive = new Ractive({
+    manager = new Ractive({
         target: modal,
         template: `
 <a style="display:none" href="" id="export-anchor"></a>
@@ -534,7 +535,7 @@ function displayReducers() {
         }
     });
 
-    ractive.on({
+    manager.on({
         sortTitle: function() {
             const r = this.get("reducers");
             if (this.get("titleSort") <= 0) {
@@ -630,7 +631,7 @@ function displayReducers() {
         cancel: function() {
             this.teardown();
             modal.remove();
-            ractive = null;
+            manager = null;
         },
 
         save: function() {
@@ -648,7 +649,7 @@ function displayReducers() {
 
             this.teardown();
             modal.remove();
-            ractive = null;
+            manager = null;
         }
     });
 }
@@ -656,7 +657,6 @@ function displayReducers() {
 
 (function() {
     let last4 = "    ";
-    let reducedValueEl = null;
 
     // Load previously saved reducers.
     reducers = GM_getValue("reducers");
@@ -888,7 +888,7 @@ function displayReducers() {
      *
      * @return  {Boolean} true if song is skipped.
      */
-    function checkSkip(currentTrack) {
+    function checkSkip(track) {
         const like = player.getElementsByClassName("like");
         const dislike = player.getElementsByClassName("dislike");
         let liked = false;
@@ -902,20 +902,20 @@ function displayReducers() {
             disliked = dislike[0].getAttribute("aria-pressed") === "true";
         }
 
-        if (disliked) {
-            setStatusText(`Skipping ${currentTrack.title} because it is disliked.`);
+        if (disliked && Math.random() > dislikedPlayProbability) {
+            setStatusText(`Skipping ${track.title} because it is disliked.`);
             clickNext();
             return true;
         }
 
         // Check if song should be reduced in play
-        if (reducers[currentTrack.id]) {
-            const value = parseInt(reducers[currentTrack.id].value);
+        if (reducers[track.id]) {
+            const value = parseInt(reducers[track.id].value);
             queryElements(".reducer-track").setValue(value);
 
             const probability = value / 100;
             if (Math.random() > probability) {
-                setStatusText(`Skipping ${currentTrack.title} due to a ${100 - value}% probability of song being skipped.`);
+                setStatusText(`Skipping ${track.title} due to a ${100 - value}% probability of song being skipped.`);
                 clickNext();
                 return true;
             }
@@ -926,7 +926,7 @@ function displayReducers() {
                 const value = parseInt(reducers[artistId].value);
                 const probability = value / 100;
                 if (Math.random() > probability) {
-                    setStatusText(`Skipping ${currentTrack.title} due to a ${100 - value}% probability of artist being skipped.`);
+                    setStatusText(`Skipping ${track.title} due to a ${100 - value}% probability of artist being skipped.`);
                     clickNext();
                     return true;
                 }
@@ -960,15 +960,14 @@ function displayReducers() {
     /**
      * Event for when a track changes.
      */
-    function onTrackChange({lastTrack, currentTrack}) {
-        const skipped = checkSkip(currentTrack);
+    function onTrackChange({lastTrack, track}) {
+        const skipped = checkSkip(track);
 
         // Use this to test that track information is being updated properly.
         if (!skipped) {
-            console.log(currentTrack);
+            console.log(track);
         }
     }
-
 
     GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; color: white;}`);
     GM_addStyle(`.paper-button {padding: 6px 16px;color: white;font-size: 14px;background-color: #484848;border:1px solid white;margin-right: 16px}`);
@@ -976,7 +975,6 @@ function displayReducers() {
 
     injectStylesheet("https://cdnjs.cloudflare.com/ajax/libs/toastify-js/1.12.0/toastify.css");
     appendReducers(document.getElementById("like-button-renderer"), "track");
-
 
     /**
      * Observer for track changing. This was a pain to get right and I have no idea
@@ -987,25 +985,25 @@ function displayReducers() {
         this.lastTrack = getCurrentTrack();
 
         function waitForTitle() {
-            let currentTrack = getCurrentTrack();
-            if (currentTrack && currentTrack.title) {
+            let track = getCurrentTrack();
+            if (track && track.title) {
                 // So, YouTube Music seems to be slow at updating the title sometimes.
                 // If title is the same as last check, wait a second and get the
                 // current track title at that time.
                 setTimeout(() => {
-                    currentTrack = getCurrentTrack();
-                    onTrackChange({lastTrack: this.lastTrack, currentTrack});
-                    this.lastTrack = currentTrack;
-                }, !this.lastTrack || this.lastTrack.title === currentTrack.title ? 500 : 1);
+                    track = getCurrentTrack();
+                    onTrackChange({lastTrack: this.lastTrack, currentTrack: track});
+                    this.lastTrack = track;
+                }, !this.lastTrack || this.lastTrack.title === track.title ? 500 : 1);
             } else {
                 setTimeout(waitForTitle, 10);
             }
         }
 
         const callback = (mutationList, observer) => {
-            const currentTrack = getCurrentTrack();
-            if (currentTrack.id !== this.lastId) {
-                this.lastId = currentTrack.id;
+            const track = getCurrentTrack();
+            if (track.id !== this.lastId) {
+                this.lastId = track.id;
                 waitForTitle();
             }
         }
