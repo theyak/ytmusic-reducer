@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Bypass thumb downed music on YouTube Music
+// @name         Bypass thumb downed music on YouTube Music and set probabilities of track/artist playing
 // @namespace    http://tampermonkey.net/
 // @version      1
 // @description  Automatically skips songs which have been thumbed down or reduced in play.
@@ -300,6 +300,108 @@ let currentTrack = {
 
 let reducers = {};
 
+
+/**
+ * A super simple modal component that tries to match the YouTube Music theme.
+ *
+ * @param  {String} Content to display on modal. HTML string is fine.
+ * @param  {Object} Options for modal
+ *    - minWidth, e.g., 300px, 50vw
+ *    - maxWidth, e.g., 800px, 66%
+ *    - buttons, e.g., [{label: String, onClick: function, focus: boolean}, ...]
+ */
+function YTMModal(text, opts = {}) {
+    this.displayCount = 0;
+
+    this.dispalyCount++;
+    const background = document.createElement("div");
+    background.style.position = "fixed";
+    background.style.width = "100vw";
+    background.style.height = "100vh";
+    background.style.top = 0;
+    background.style.left = 0;
+    if (this.displayCount <= 1) {
+        background.style.backgroundColor = "rgba(0, 0, 0, .85)";
+    }
+
+    const modal = document.createElement("div");
+    modal.style.position = "absolute";
+    modal.style.left = "50%";
+    modal.style.top = "40%";
+    modal.style.transform = "translate(-50%, -40%)";
+
+    modal.style.border = "1px solid #383838";
+    modal.style.backgroundColor = "#212121";
+    modal.style.fontSize = "16px";
+    modal.style.color = "#aaaaaa";
+    modal.style.overflowY = "auto";
+    modal.style.zIndex = 9999999 + this.displayCount;
+    modal.style.minWidth = opts.minWidth || "200px";
+    modal.style.maxWidth = opts.maxWidth || "80vw";
+    modal.style.fontFamily = "roboto, sans-serif";
+    background.appendChild(modal);
+
+    const body = document.createElement("div");
+    body.innerHTML = text;
+    body.style.borderBottom = "1px solid #383838";
+    body.style.padding = "16px";
+    body.style.minHeight = "4rem";
+    modal.appendChild(body);
+
+    const buttons = document.createElement("div");
+    buttons.style.padding = "16px";
+    buttons.style.textAlign = "right";
+    buttons.style.fontSize = "14px";
+
+    if (opts.buttons) {
+    } else {
+        // Standard alert message
+        opts.buttons = [{
+            label: "OK",
+            onClick: () => {},
+        }];
+    }
+
+    let focusButton = null;
+    for (let button of opts.buttons) {
+        const element = document.createElement("button");
+
+        // First button will be default focus. It may change
+        // as we look through the buttons.
+        if (!focusButton) {
+            focusButton = element;
+        }
+
+        element.className = "paper-button";
+        element.role = "button";
+        element.innerHTML = button.label;
+        element.addEventListener("click", (e) => {
+            if (button.onClick) {
+                button.onClick(e, modal);
+            }
+
+            // Close with a timeout to allow click handler to do its thing.
+            // Useful if there is a form in the modal body.
+            setTimeout(() => {
+                background.remove();
+                this.displayCount--;
+            }, 1);
+        });
+        if (button.focus) {
+            focusButton = element;
+        }
+        buttons.appendChild(element);
+    }
+
+    modal.appendChild(buttons);
+
+    document.getElementsByTagName("body")[0].appendChild(background);
+
+    if (focusButton) {
+        focusButton.focus();
+    }
+}
+
 /**
  * Display and handle events on reducers.
  * This is triggered by clicking on the percentage probablility of play in the player control.
@@ -308,51 +410,64 @@ function displayReducers() {
     const modal = document.createElement("div");
     modal.id = "reducers-modal";
     modal.style.border = "1px solid #383838";
+    modal.style.color = "white";
     modal.style.backgroundColor = "#212121";
     modal.style.position = "fixed";
     modal.style.inset = "2vh";
-    modal.style.padding = "16px";
     modal.style.fontSize = "16px";
     modal.style.color = "#aaaaaa";
     modal.style.overflowY = "auto";
     modal.style.zIndex = "999999";
-    modal.innerHTML = "Hello!";
     const body = document.getElementsByTagName("body")[0];
     body.appendChild(modal);
 
     let ractive = new Ractive({
         target: modal,
         template: `
-<div style="display: flex; justify-content: space-between; width: 100%">
-  <div>Reducers</div>
-  <div style="cursor: pointer; font-size: 36px" on-click="@.fire("teardown")">&#215;</div>
+<div style="display: grid; height: 100%; grid-template-rows: 1fr 64px; grid-template-columns: 1fr;">
+  <div style="padding:16px;">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th style="cursor: default" id="reduce-title" on-click="@.fire('sortTitle')">Title</th>
+          <th>Artist</th>
+          <th>Reduction</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td style="border-top:1px solid #383838;" colspan="5"></td></tr>
+        {{#each reducers:num}}
+        <tr>
+          <td>{{id}}</td><td>{{title}}</td><td>{{artist}}</td><td>{{value}}%</td>
+          <td>
+          <button on-click="@.fire("increase", {}, {num, id})">+</button>
+          <button on-click="@.fire("decrease", {}, {num, id})">&minus;</button>
+          <button on-click="@.fire("remove", {}, {num, id})">&#215;</button>
+          </td>
+        </tr>
+        {{/each}}
+      </tbody>
+    </table>
+  </div>
+  <div style="padding:16px;border-top: 1px solid #383838;">
+    <div style="display:flex; justify-content:space-between">
+      <div>
+        <button class="paper-button" role="button">Export</button>
+        <button class="paper-button" role="button">Import/Merge</button>
+      </div>
+      <div>
+        <button class="paper-button" role="button" on-click="@.fire('cancel')">Cancel</button>
+        <button class="paper-button" role="button" on-click="@.fire('save')">Save</button>
+      </div>
+    </div>
+  </div>
 </div>
-<table>
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th style="cursor: default" id="reduce-title" on-click="@.fire('sortTitle')">Title</th>
-      <th>Artist</th>
-      <th>Reduction</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td style="border-top:1px solid #383838;" colspan="5"></td></tr>
-    {{#each reducers:num}}
-    <tr>
-      <td>{{id}}</td><td>{{title}}</td><td>{{artist}}</td><td>{{value}}%</td>
-      <td>
-        <button on-click="@.fire("increase", {}, {num, id})">+</button>
-        <button on-click="@.fire("decrease", {}, {num, id})">&minus;</button>
-        <button on-click="@.fire("remove", {}, {num, id})">&#215;</button>
-      </td>
-    </tr>
-    {{/each}}
-  </tbody>
-</table>
       `,
         data: {
-            reducers: Object.values(reducers),
+            // Deep clone otherwise global reducers will get modified and cancel won't work.
+            // Sorry, spread operator doesn't work as the arrays inside are still shallow cloned.
+            reducers: Object.values(JSON.parse(JSON.stringify(reducers))),
             titleSort: 0,
             artistSort: 0,
         }
@@ -384,57 +499,60 @@ function displayReducers() {
         },
 
         increase: function(context, data) {
-            const reducer = reducers[data.id];
-            if (!reducer) {
-                return;
-            }
+            const valuePath = `reducers[${data.num}].value`;
+            let value = parseInt(this.get(valuePath));
 
-            let value = parseInt(reducer.value);
             if (value >= 100) {
                 return;
             }
 
-            const keyPath = `reducers[${data.num}].value`;
             value += skipInterval;
             if (value >= 100) {
                 value = 100;
-                delete reducers[data.id];
-            } else {
-                reducer.value = value;
             }
-            this.set(keyPath, value);
-            GM_setValue("reducers", JSON.stringify(reducers));
+            this.set(valuePath, value);
         },
 
         decrease: function(context, data) {
-            const reducer = reducers[data.id];
-            if (!reducer) {
+            const valuePath = `reducers[${data.num}].value`;
+            const titlePath = `reducers[${data.num}].title`;
+            let value = parseInt(this.get(valuePath));
+            const title = this.get(titlePath);
+
+            if (value <= skipInterval && title !== "*") {
                 return;
             }
 
-            let value = parseInt(reducer.value);
-            if (value <= skipInterval && reducer.title !== "*") {
-                return;
-            }
             if (value <= 0) {
                 return;
             }
 
-            const keyPath = `reducers[${data.num}].value`;
             value -= skipInterval;
-            this.set(keyPath, value);
-
-            reducer.value = value;
-            GM_setValue("reducers", JSON.stringify(reducers));
+            this.set(valuePath, value);
         },
 
         remove: function(context, data) {
             this.splice("reducers", data.num, 1);
-            delete reducers[data.id];
-            GM_setValue("reducers", JSON.stringify(reducers));
         },
 
-        teardown: function() {
+        cancel: function() {
+            this.teardown();
+            modal.remove();
+        },
+
+        save: function() {
+            // Build new reducers object for the rest of the app
+            let r = this.get("reducers");
+            reducers = {};
+            r.forEach((reducer) => {
+                if (reducer.value < 100) {
+                    reducers[reducer.id] = reducer;
+                }
+            });
+
+            // Save reducers
+            GM_setValue("reducers", JSON.stringify(reducers));
+
             this.teardown();
             modal.remove();
         }
@@ -492,7 +610,7 @@ function displayReducers() {
         value.style.color = "#aaaaaa";
         value.style.cursor = "pointer";
         value.innerText = "100%";
-        value.addEventListener("click", displayReducers);
+        value.addEventListener("click", () => displayReducers());
         wrapper.appendChild(value);
 
         // Chevron Down
@@ -758,7 +876,10 @@ function displayReducers() {
     }
 
 
-    GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; }`);
+    GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; color: white;}`);
+    GM_addStyle(`.paper-button {padding: 6px 16px;color: white;font-size: 14px;background-color: #484848;border:1px solid white;margin-right: 16px}`);
+    GM_addStyle(`.paper-button:last-child {margin-right: 0;}`);
+
     injectStylesheet("https://cdnjs.cloudflare.com/ajax/libs/toastify-js/1.12.0/toastify.css");
     appendReducers(document.getElementById("like-button-renderer"), "track");
 
