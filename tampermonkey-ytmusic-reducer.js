@@ -113,7 +113,7 @@ function queryElements(selectors) {
 }
 
 /**
- * A not so string hashing function, but good enough for our purposes.
+ * A not so strong hashing function, but good enough for our purposes.
  *
  * @param  {String}
  * @param  {int}
@@ -298,7 +298,7 @@ let currentTrack = {
 };
 
 let reducers = {};
-
+let ractive = null; // The reducer manager window
 
 /**
  * A super simple modal component that tries to match the YouTube Music theme.
@@ -319,6 +319,7 @@ function YTMModal(text, opts = {}) {
     background.style.height = "100vh";
     background.style.top = 0;
     background.style.left = 0;
+    background.style.zIndex = 9999999 + this.displayCount;
     if (this.displayCount <= 1) {
         background.style.backgroundColor = "rgba(0, 0, 0, .85)";
     }
@@ -334,7 +335,6 @@ function YTMModal(text, opts = {}) {
     modal.style.fontSize = "16px";
     modal.style.color = "#aaaaaa";
     modal.style.overflowY = "auto";
-    modal.style.zIndex = 9999999 + this.displayCount;
     modal.style.minWidth = opts.minWidth || "200px";
     modal.style.maxWidth = opts.maxWidth || "80vw";
     modal.style.fontFamily = "roboto, sans-serif";
@@ -401,6 +401,67 @@ function YTMModal(text, opts = {}) {
     }
 }
 
+
+const fileImport = (e) => {
+    if (!ractive) {
+        setStatusText("Reducer Manager not open");
+        return;
+    }
+
+    const file = document.getElementById("fileupload").files[0];
+
+    let reader = new FileReader();
+
+    // Closure to capture the file information.
+    reader.onload = (function(theFile) {
+        return function(e) {
+            if (!ractive) {
+                setStatusText("Reducer Manager not open");
+                return;
+            }
+
+            const currentReducers = {};
+            for (let reducer of ractive.get("reducers")) {
+                currentReducers[reducer.id] = reducer;
+            }
+
+            const data = e.target.result;
+            let obj = {};
+            try {
+                obj = JSON.parse(data);
+            } catch (e) {
+                setStatusText("Invalid import file. Not valid JSON.");
+                return;
+            }
+
+            if (!Array.isArray(obj)) {
+                setStatusText("Invalid JSON object. Must be array of objects");
+                return;
+            }
+
+            for (let reducer of obj) {
+                if (typeof reducer !== 'object') {
+                    setStatusText("Invalid JSON object. Must be array of objects");
+                    return;
+                }
+
+                if (!reducer.id || !reducer.title || !reducer.artist || !reducer.value) {
+                    setStatusText("Invalid JSON object. Error with row " + JSON.stringify(reducer));
+                    return;
+                }
+
+                currentReducers[reducer.id] = reducer;
+            }
+
+            console.log(currentReducers);
+            ractive.set("reducers", Object.values(currentReducers));
+        };
+    })(file);
+
+    // Read in the image file as a data URL.
+    reader.readAsText(file);
+}
+
 /**
  * Display and handle events on reducers.
  * This is triggered by clicking on the percentage probablility of play in the player control.
@@ -420,7 +481,7 @@ function displayReducers() {
     const body = document.getElementsByTagName("body")[0];
     body.appendChild(modal);
 
-    let ractive = new Ractive({
+    ractive = new Ractive({
         target: modal,
         template: `
 <a style="display:none" href="" id="export-anchor"></a>
@@ -454,7 +515,7 @@ function displayReducers() {
     <div style="display:flex; justify-content:space-between">
       <div>
         <button class="paper-button" role="button" on-click="@.fire('export')">Export</button>
-        <button class="paper-button" role="button">Import/Merge</button>
+        <button class="paper-button" role="button" on-click="@.fire('merge')">Import/Merge</button>
       </div>
       <div>
         <button class="paper-button" role="button" on-click="@.fire('cancel')">Cancel</button>
@@ -535,6 +596,20 @@ function displayReducers() {
             this.splice("reducers", data.num, 1);
         },
 
+        merge: function() {
+            const html = `
+                <input id="fileupload" type="file" name="fileupload" />
+            `;
+            const buttons = [{
+                label: "Upload",
+                onClick: fileImport,
+            }, {
+                label: "Cancel"
+            }];
+
+            YTMModal(html, {buttons});
+        },
+
         export: function() {
             const blob = new Blob([JSON.stringify(this.get("reducers"), null, 2)], { type: "text/json" });
             const link = document.createElement("a");
@@ -555,6 +630,7 @@ function displayReducers() {
         cancel: function() {
             this.teardown();
             modal.remove();
+            ractive = null;
         },
 
         save: function() {
@@ -572,6 +648,7 @@ function displayReducers() {
 
             this.teardown();
             modal.remove();
+            ractive = null;
         }
     });
 }
