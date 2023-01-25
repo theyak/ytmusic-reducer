@@ -22,7 +22,6 @@
 // TODO: Can we somehow get reducer value into playlist?
 // TODO: Not all track titles seem to be working. Figure that out.
 // TODO: Merge
-// TODO: Fix bug where if you set track to 100% in list you can no longer reduce because it's been deleted. Maybe only update on save?
 
 const skipInterval = 25;
 
@@ -424,6 +423,7 @@ function displayReducers() {
     let ractive = new Ractive({
         target: modal,
         template: `
+<a style="display:none" href="" id="export-anchor"></a>
 <div style="display: grid; height: 100%; grid-template-rows: 1fr 64px; grid-template-columns: 1fr;">
   <div style="padding:16px;">
     <table>
@@ -453,7 +453,7 @@ function displayReducers() {
   <div style="padding:16px;border-top: 1px solid #383838;">
     <div style="display:flex; justify-content:space-between">
       <div>
-        <button class="paper-button" role="button">Export</button>
+        <button class="paper-button" role="button" on-click="@.fire('export')">Export</button>
         <button class="paper-button" role="button">Import/Merge</button>
       </div>
       <div>
@@ -533,6 +533,23 @@ function displayReducers() {
 
         remove: function(context, data) {
             this.splice("reducers", data.num, 1);
+        },
+
+        export: function() {
+            const blob = new Blob([JSON.stringify(this.get("reducers"), null, 2)], { type: "text/json" });
+            const link = document.createElement("a");
+            link.download = "ytmusic-reducers.json";
+            link.href = window.URL.createObjectURL(blob);
+            link.dataset.downloadurl = ["text/json", link.download, link.href].join(":");
+
+            const evt = new MouseEvent("click", {
+                bubbles: true,
+                cancelable: true,
+            });
+
+            link.dispatchEvent(evt);
+            window.URL.revokeObjectURL(link.href);
+            link.remove();
         },
 
         cancel: function() {
