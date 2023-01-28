@@ -246,6 +246,19 @@ const getArtist = () => {
 }
 
 /**
+ * Get the currently active track information.
+ *
+ * @return {Object}
+ */
+function getCurrentTrack() {
+    return {
+        id: getTrackId(),
+        title: getTrackTitle(),
+        artist: getTrackArtist(),
+    }
+}
+
+/**
  * Check if currently playing a track
  *
  * @return {Boolean}
@@ -430,7 +443,7 @@ const fileImport = (e) => {
             let obj = {};
             try {
                 obj = JSON.parse(data);
-            } catch (e) {
+            } catch (ex) {
                 setStatusText("Invalid import file. Not valid JSON.");
                 return;
             }
@@ -462,11 +475,8 @@ const fileImport = (e) => {
     reader.readAsText(file);
 }
 
-
-
 /**
  * Display and handle events on reducers.
- * This is triggered by clicking on the percentage probablility of play in the player control.
  */
 function displayReducers() {
     const modal = document.createElement("div");
@@ -655,8 +665,115 @@ function displayReducers() {
     });
 }
 
+/**
+ * Creates a percentage control to increase or decrease a value.
+ *
+ * @param {Object} min: 25, max: 100, skip: 25, value: 100
+ */
+function createReducer(type, opts = {}) {
+    let valueEl = null;
+
+    opts = {
+        min: 25,
+        max: 100,
+        skip: 25,
+        value: 100,
+        ...opts
+    }
+
+    const getValue = () => control.value;
+    const setValue = (val) => {
+        control.value = parseInt(val);
+        valueEl.innerText = control.value + "%";
+    }
+
+    const control = document.createElement("div");
+    control.style.padding = "8px 0px 8px 16px";
+    control.style.outline = "none";
+    control.style.userSelect = "none";
+    control.type = type;
+    control.className = `reducer-control reducer-${type}`;
+    control.value = opts.value;
+
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "column";
+    wrapper.style.alignItems = "center";
+
+    // Chevron Up
+    const up = document.createElement("div");
+    up.style.cursor = "pointer";
+    up.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 12" style="fill: #aaaaaa;"><path d="m12 6.879-7.061 7.06 2.122 2.122L12 11.121l4.939 4.94 2.122-2.122z"></path></svg>`;
+    up.addEventListener("click", increase);
+    wrapper.appendChild(up);
+
+    // Label
+    const value = document.createElement("div");
+    value.className = "reducer-label";
+    value.style.fontSize = "10px";
+    value.style.color = "#aaaaaa";
+    value.innerText = control.value + "%";
+    wrapper.appendChild(value);
+    valueEl = value;
+
+    // Chevron Down
+    const down = document.createElement("div");
+    down.style.cursor = "pointer";
+    down.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 10 24 12" style="fill: #aaaaaa;"><path d="M16.939 7.939 12 12.879l-4.939-4.94-2.122 2.122L12 17.121l7.061-7.06z"></path></svg>`;
+    down.addEventListener("click", decrease);
+    wrapper.appendChild(down);
+    control.appendChild(wrapper);
+
+    control.setValue = (val) => setValue(val);
+    control.getValue = () => control.value;
+
+    return control;
+
+    /**
+     * Reduce value. Triggered by clicking the down chevron.
+     */
+    function decrease() {
+        const previous = getValue();
+        const value = Math.max(getValue() - opts.skip, opts.min);
+        if (value < previous) {
+            onChange(value, previous);
+        }
+    }
+
+    /**
+     * Increase value. Triggered by clicking the up chevron.
+     */
+    function increase() {
+        const previous = getValue();
+        const value = Math.min(getValue() + opts.skip, opts.max);
+        if (value > previous) {
+            onChange(value, previous);
+        }
+    }
+
+    /**
+     * If a change has occurred from a decrease or increase of value,
+     * Set the display and throw change event.
+     */
+    function onChange(value, previous) {
+        setValue(value);
+        control.dispatchEvent(new CustomEvent("change", {
+            detail: {
+                previous,
+                value
+            }
+        }));
+    }
+}
 
 (function() {
+    GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; color: white; }`);
+    GM_addStyle(`#reducers-modal th { user-select: none; }`);
+    GM_addStyle(`.paper-button {padding: 6px 16px; color: white;font-size: 14px; background-color: #484848; border:1px solid white; margin-right: 16px; }`);
+    GM_addStyle(`.paper-button:last-child {margin-right: 0; }`);
+
+    injectStylesheet("https://cdnjs.cloudflare.com/ajax/libs/toastify-js/1.12.0/toastify.css");
+
     let last4 = "    ";
 
     // Load previously saved reducers.
@@ -671,122 +788,6 @@ function displayReducers() {
     if (!player) {
         console.log("Could not find Youtube player control.");
         return;
-    }
-
-    /**
-     * Creates a percentage control to increase or decrease a value.
-     *
-     * @param {Object} min: 25, max: 100, skip: 25, value: 100
-     */
-    function createReducer(type, opts = {}) {
-        let valueEl = null;
-
-        opts = {
-            min: 25,
-            max: 100,
-            skip: 25,
-            value: 100,
-            ...opts
-        }
-
-        const getValue = () => control.value;
-        const setValue = (val) => {
-            control.value = parseInt(val);
-            valueEl.innerText = control.value + "%";
-        }
-
-        const control = document.createElement("div");
-        control.style.padding = "8px 0px 8px 16px";
-        control.style.outline = "none";
-        control.style.userSelect = "none";
-        control.type = type;
-        control.className = `reducer-control reducer-${type}`;
-        control.value = opts.value;
-
-        const wrapper = document.createElement("div");
-        wrapper.style.display = "flex";
-        wrapper.style.flexDirection = "column";
-        wrapper.style.alignItems = "center";
-
-        // Chevron Up
-        const up = document.createElement("div");
-        up.style.cursor = "pointer";
-        up.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 12" style="fill: #aaaaaa;"><path d="m12 6.879-7.061 7.06 2.122 2.122L12 11.121l4.939 4.94 2.122-2.122z"></path></svg>`;
-        up.addEventListener("click", increase);
-        wrapper.appendChild(up);
-
-        // Label - Still needs refactoring for click event. This control shouldn't need to know displayReducers() exists.
-        const value = document.createElement("div");
-        value.className = "reducer-label";
-        value.style.fontSize = "10px";
-        value.style.color = "#aaaaaa";
-        value.style.cursor = "pointer";
-        value.innerText = control.value + "%";
-        value.addEventListener("click", () => displayReducers());
-        wrapper.appendChild(value);
-        valueEl = value;
-
-        // Chevron Down
-        const down = document.createElement("div");
-        down.style.cursor = "pointer";
-        down.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 10 24 12" style="fill: #aaaaaa;"><path d="M16.939 7.939 12 12.879l-4.939-4.94-2.122 2.122L12 17.121l7.061-7.06z"></path></svg>`;
-        down.addEventListener("click", decrease);
-        wrapper.appendChild(down);
-        control.appendChild(wrapper);
-
-        control.setValue = (val) => setValue(val);
-        control.getValue = () => control.value;
-
-        return control;
-
-        /**
-         * Reduce value. Triggered by clicking the down chevron.
-         */
-        function decrease() {
-            const previous = getValue();
-            const value = Math.max(getValue() - opts.skip, opts.min);
-            if (value < previous) {
-                onChange(value, previous);
-            }
-        }
-
-        /**
-         * Increase value. Triggered by clicking the up chevron.
-         */
-        function increase() {
-            const previous = getValue();
-            const value = Math.min(getValue() + opts.skip, opts.max);
-            if (value > previous) {
-                onChange(value, previous);
-            }
-        }
-
-        /**
-         * If a change has occurred from a decrease or increase of value,
-         * Set the display and throw change event.
-         */
-        function onChange(value, previous) {
-            setValue(value);
-            control.dispatchEvent(new CustomEvent("change", {
-                detail: {
-                    previous,
-                    value
-                }
-            }));
-        }
-    }
-
-    /**
-     * Get the currently active track information.
-     *
-     * @return {Object}
-     */
-    function getCurrentTrack() {
-        return {
-            id: getTrackId(),
-            title: getTrackTitle(),
-            artist: getTrackArtist(),
-        }
     }
 
     /**
@@ -921,14 +922,8 @@ function displayReducers() {
         }
     }
 
-    GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; color: white; }`);
-    GM_addStyle(`#reducers-modal th { user-select: none; }`);
-    GM_addStyle(`.paper-button {padding: 6px 16px; color: white;font-size: 14px; background-color: #484848; border:1px solid white; margin-right: 16px; }`);
-    GM_addStyle(`.paper-button:last-child {margin-right: 0; }`);
-
-    injectStylesheet("https://cdnjs.cloudflare.com/ajax/libs/toastify-js/1.12.0/toastify.css");
+    // Add the player probability control to the track dock.
     const playerReducer = createReducer("track", {max: 100, min: 25, value: 100, skip: skipInterval});
-
     playerReducer.addEventListener("change", (e) => {
         const value = e.target.value;
 
@@ -947,8 +942,22 @@ function displayReducers() {
         GM_setValue("reducers", JSON.stringify(reducers));
         setStatusText(`${track.title} (${track.id}) will play ${value}% of the time.`);
     });
-
     document.getElementById("like-button-renderer").after(playerReducer);
+
+    // Add the icon to display the probability manager
+    const rightContent = getElement("ytmusic-nav-bar .right-content");
+    if (rightContent) {
+        const div = document.createElement("div");
+        div.style.marginRight = "8px";
+        div.style.padding = "8px";
+        div.style.cursor = "pointer";
+        div.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" style="fill: #cccccc"><path d="M11.445 21.832a1 1 0 0 0 1.11 0l9-6A.998.998 0 0 0 21.8 14.4l-9-12c-.377-.504-1.223-.504-1.6 0l-9 12a1 1 0 0 0 .245 1.432l9 6zM13 19.131V6l6.565 8.754L13 19.131zM11 6v13.131l-6.565-4.377L11 6z"></path></svg>`;
+        div.addEventListener("click", displayReducers);
+        rightContent.prepend(div);
+
+        // Not really related to this script, but why do they hide the history button? Show it!
+        getElement(".history-button").removeAttribute("hidden");
+    }
 
     /**
      * Observer for track changing. This was a pain to get right and I have no idea
