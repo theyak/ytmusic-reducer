@@ -3,7 +3,6 @@
 // @namespace    http://tampermonkey.net/
 // @version      1
 // @description  Automatically skips songs which have been thumbed down or reduced in play.
-// @author       theyak
 // @match        https://music.youtube.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -14,9 +13,6 @@
 
 /* global Toastify */
 /* global Ractive */
-/* global GM_setValue */
-/* gloabl GM_getValue */
-/* global GM_addStyle */
 
 // This script wouldn't be possible without the awesome Web Scrobbler project.
 // https://github.com/web-scrobbler/web-scrobbler.
@@ -53,7 +49,7 @@ const regex = {
  * @param  {int} Time in milliseconds to wait between checks
  */
 function waitForElement(selector, callback, timeout = 10) {
-    const el = queryElements(selector);
+    const el = getElement(selector);
     if (el) {
         callback(el);
     } else {
@@ -73,7 +69,7 @@ function waitForElement(selector, callback, timeout = 10) {
  * @return {Object} Text of element, if available, or default value
  */
 function getAttrFromSelectors(selectors, attr, defaultValue = null) {
-    const element = queryElements(selectors);
+    const element = getElement(selectors);
 
     if (element) {
         return element.getAttribute(attr);
@@ -89,7 +85,7 @@ function getAttrFromSelectors(selectors, attr, defaultValue = null) {
  * @param  {String|Array} selectors Single selector or array of selectors
  * @return {Element|null} Element object
  */
-function queryElements(selectors) {
+function getElement(selectors) {
     if (!selectors) {
         return null;
     }
@@ -173,7 +169,7 @@ function getYtVideoIdFromUrl(videoUrl) {
 
 
 const getTrackArtist = () => {
-    const artist = queryElements(artistSelectors);
+    const artist = getElement(artistSelectors);
     if (artist) {
         return artist.innerText.trim();
     }
@@ -184,7 +180,7 @@ const getTrackArtist = () => {
  * Get the track name of the currently playing track
  */
 const getTrackTitle = () => {
-    const track = queryElements(trackSelector);
+    const track = getElement(trackSelector);
     if (track) {
         return track.innerText.trim();
     }
@@ -209,7 +205,7 @@ const getTrackId = () => {
 /**
  * Get ID of current artist
  *
- * @return {String|Boolean} Artist ID, false if not found.
+ * @return {String|Boolean} Artist ID, returning false if no artist found.
  */
 const getArtistId = () => {
     if (window.location.href.indexOf("channel") > 0) {
@@ -217,12 +213,12 @@ const getArtistId = () => {
         return urlParts[urlParts.length - 1];
     }
 
-    const byline = queryElements(".middle-controls .byline");
+    const byline = getElement(".middle-controls .byline");
     if (!byline) {
         return false;
     }
 
-    // It's most likely the first A tag
+    // It's most likely the first A tag, but we'll check 'em all.
     const elements = byline.getElementsByTagName("A");
     for (let el of elements) {
         const href = el.getAttribute("href");
@@ -240,7 +236,7 @@ const getArtistId = () => {
  */
 const getArtist = () => {
     if (window.location.href.indexOf("channel") > 0) {
-        const el = queryElements("#header .title");
+        const el = getElement("#header .title");
         if (el) {
             return el.innerText.trim();
         }
@@ -296,7 +292,6 @@ let currentTrack = {
     id: null,
     title: null,
     artist: null,
-    playing: false,
 };
 
 let reducers = {};
@@ -403,7 +398,11 @@ function YTMModal(text, opts = {}) {
     }
 }
 
-
+/**
+ * Import and merge an exported file in to the reducer list
+ *
+ * @param  {Event} e
+ */
 const fileImport = (e) => {
     if (!manager) {
         setStatusText("Reducer Manager not open");
@@ -462,6 +461,8 @@ const fileImport = (e) => {
     // Read in the image file as a data URL.
     reader.readAsText(file);
 }
+
+
 
 /**
  * Display and handle events on reducers.
@@ -673,17 +674,34 @@ function displayReducers() {
     }
 
     /**
-     * Adds the up and down chevrons to the track component.
+     * Creates a percentage control to increase or decrease a value.
      *
-     * @param  {Element} Element to place control after
-     * @param  {String} Type of reducer, artist or track.
+     * @param {Object} min: 25, max: 100, skip: 25, value: 100
      */
-    function appendReducers(el, type) {
+    function createReducer(type, opts = {}) {
+        let valueEl = null;
+
+        opts = {
+            min: 25,
+            max: 100,
+            skip: 25,
+            value: 100,
+            ...opts
+        }
+
+        const getValue = () => control.value;
+        const setValue = (val) => {
+            control.value = parseInt(val);
+            valueEl.innerText = control.value + "%";
+        }
+
         const control = document.createElement("div");
         control.style.padding = "8px 0px 8px 16px";
         control.style.outline = "none";
-        control.reducerType = type;
+        control.style.userSelect = "none";
+        control.type = type;
         control.className = `reducer-control reducer-${type}`;
+        control.value = opts.value;
 
         const wrapper = document.createElement("div");
         wrapper.style.display = "flex";
@@ -697,32 +715,65 @@ function displayReducers() {
         up.addEventListener("click", increase);
         wrapper.appendChild(up);
 
-        // Label
+        // Label - Still needs refactoring for click event. This control shouldn't need to know displayReducers() exists.
         const value = document.createElement("div");
         value.className = "reducer-label";
         value.style.fontSize = "10px";
         value.style.color = "#aaaaaa";
         value.style.cursor = "pointer";
-        value.innerText = "100%";
+        value.innerText = control.value + "%";
         value.addEventListener("click", () => displayReducers());
         wrapper.appendChild(value);
+        valueEl = value;
 
         // Chevron Down
         const down = document.createElement("div");
         down.style.cursor = "pointer";
         down.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 10 24 12" style="fill: #aaaaaa;"><path d="M16.939 7.939 12 12.879l-4.939-4.94-2.122 2.122L12 17.121l7.061-7.06z"></path></svg>`;
-        down.addEventListener("click", reduce);
+        down.addEventListener("click", decrease);
         wrapper.appendChild(down);
-
         control.appendChild(wrapper);
-        el.after(control);
 
-        control.valueEl = value;
-        control.setValue = function(value) {
-            control.valueEl.innerText = parseInt(value) + "%";
-        }
+        control.setValue = (val) => setValue(val);
+        control.getValue = () => control.value;
 
         return control;
+
+        /**
+         * Reduce value. Triggered by clicking the down chevron.
+         */
+        function decrease() {
+            const previous = getValue();
+            const value = Math.max(getValue() - opts.skip, opts.min);
+            if (value < previous) {
+                onChange(value, previous);
+            }
+        }
+
+        /**
+         * Increase value. Triggered by clicking the up chevron.
+         */
+        function increase() {
+            const previous = getValue();
+            const value = Math.min(getValue() + opts.skip, opts.max);
+            if (value > previous) {
+                onChange(value, previous);
+            }
+        }
+
+        /**
+         * If a change has occurred from a decrease or increase of value,
+         * Set the display and throw change event.
+         */
+        function onChange(value, previous) {
+            setValue(value);
+            control.dispatchEvent(new CustomEvent("change", {
+                detail: {
+                    previous,
+                    value
+                }
+            }));
+        }
     }
 
     /**
@@ -739,130 +790,13 @@ function displayReducers() {
     }
 
     /**
-     * Reduce the probability of playing the current track for future plays.
-     */
-    function reduce(e) {
-        const control = e.target.closest(".reducer-control");
-
-        // Artist reducer
-        if (control.reducerType === "artist") {
-            const id = getArtistId();
-            const artist = getArtist();
-            if (!id) {
-                setStatusText(`Unable to find artist.`);
-                return false;
-            }
-
-            let value = 100;
-            if (reducers[id]) {
-                value = parseInt(reducers[id].value);
-                value -= skipInterval;
-                if (value < 0) {
-                    value = 0;
-                }
-                reducers[id].value = value;
-            } else {
-                value -= skipInterval;
-                reducers[id] = {
-                    id,
-                    title: "*",
-                    artist,
-                    value,
-                }
-            }
-
-            control.setValue(value);
-
-            GM_setValue("reducers", JSON.stringify(reducers));
-            setStatusText(`${artist} will play ${value}% of the time.`);
-            return;
-        }
-
-        // Track reducer
-        currentTrack = getCurrentTrack();
-
-        let value = 100;
-        if (reducers[currentTrack.id]) {
-            value = parseInt(reducers[currentTrack.id].value);
-        }
-
-        if (value <= skipInterval) {
-            return;
-        }
-
-        value -= skipInterval;
-
-        reducers[currentTrack.id] = {
-            id: currentTrack.id,
-            title: currentTrack.title,
-            artist: currentTrack.artist,
-            value
-        };
-
-        GM_setValue("reducers", JSON.stringify(reducers));
-        setStatusText(`${currentTrack.title} (${currentTrack.id}) will play ${value}% of the time.`);
-        control.setValue(value);
-    }
-
-    /**
-     * Increase the probability of playing the current track for future plays.
-     */
-    function increase(e) {
-        currentTrack = getCurrentTrack();
-
-        const control = e.target.closest(".reducer-control");
-
-        // Artist reducer
-        if (control.reducerType === "artist") {
-            const id = getArtistId();
-            const artist = getArtist();
-            if (!reducers[id]) {
-                return;
-            }
-
-            let value = parseInt(reducers[id].value);
-            value += skipInterval;
-            if (value >= 100) {
-                value = 100;
-                delete reducers[id];
-            } else {
-                reducers[id].value = value;
-            }
-
-            control.setValue(value);
-            GM_setValue("reducers", JSON.stringify(reducers));
-            setStatusText(`${artist} will play ${value}% of the time.`);
-            return;
-        }
-
-        if (reducers[currentTrack.id]) {
-            let value = parseInt(reducers[currentTrack.id].value)
-            value += skipInterval;
-            if (value >= 100) {
-                value = 100;
-                delete reducers[currentTrack.id];
-            } else {
-                reducers[currentTrack.id] = value;
-            }
-            GM_setValue("reducers", JSON.stringify(reducers));
-            setStatusText(`${currentTrack.title} (${currentTrack.id}) will play ${value}% of the time.`);
-            control.setValue(value);
-        }
-    }
-
-    /**
      * Stuff for testing.
      * Please ignore.
      */
     document.addEventListener("keydown", (e) => {
         last4 = last4.slice(-3) + e.key;
 
-        // Reduce playing time
-        if (last4 === "duce") {
-            reduce();
-        } else if (last4 === "ease") {
-            increase();
-        } else if (last4 === "rent") {
+        if (last4 === "rent") {
             setStatusText(JSON.stringify(currentTrack));
         } else if (last4 === "tist") {
             setStatusText(getArtistId());
@@ -911,8 +845,6 @@ function displayReducers() {
         // Check if song should be reduced in play
         if (reducers[track.id]) {
             const value = parseInt(reducers[track.id].value);
-            queryElements(".reducer-track").setValue(value);
-
             const probability = value / 100;
             if (Math.random() > probability) {
                 setStatusText(`Skipping ${track.title} due to a ${100 - value}% probability of song being skipped.`);
@@ -931,13 +863,10 @@ function displayReducers() {
                     return true;
                 }
             }
-
-            queryElements(".reducer-track").setValue(100);
         }
 
         return false;
     }
-
 
     /**
      * Event for when location changes. Locations are basically homepage,
@@ -945,15 +874,34 @@ function displayReducers() {
      */
     function onLocationChange({lastUrl, currentUrl}) {
         if (currentUrl.indexOf("channel") > 0) {
-            // FInd header actions
-            const el = queryElements("#header .actions .buttons");
+            // Find header actions
+            const el = document.querySelector("#header .actions .buttons");
 
-            const reducerEl = appendReducers(el, "artist");
+            const reducer = createReducer("artist", {min: 0, max: 100, skip: skipInterval, value: 100});
             const artistId = getArtistId();
+            const artist = getArtist();
+            el.after(reducer);
 
             if (artistId && reducers[artistId]) {
-                reducerEl.setValue(reducers[artistId].value);
+                reducer.setValue(reducers[artistId].value);
             }
+
+            reducer.addEventListener("change", (e) => {
+                const value = e.target.value;
+                reducers[artistId] = {
+                    id: artistId,
+                    title: "*",
+                    artist,
+                    value,
+                }
+
+                if (value >= 100) {
+                    delete reducers[artistId];
+                }
+
+                GM_setValue("reducers", JSON.stringify(reducers));
+                setStatusText(`${artist} will play ${value}% of the time.`);
+            });
         }
     }
 
@@ -963,18 +911,44 @@ function displayReducers() {
     function onTrackChange({lastTrack, track}) {
         const skipped = checkSkip(track);
 
-        // Use this to test that track information is being updated properly.
+        const value = reducers[track.id] && reducers[track.id].value;
         if (!skipped) {
-            console.log(track);
+            if (reducers[track.id] && reducers[track.id].value) {
+                playerReducer.setValue(reducers[track.id].value);
+            } else {
+                playerReducer.setValue(100);
+            }
         }
     }
 
-    GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; color: white;}`);
-    GM_addStyle(`.paper-button {padding: 6px 16px;color: white;font-size: 14px;background-color: #484848;border:1px solid white;margin-right: 16px}`);
-    GM_addStyle(`.paper-button:last-child {margin-right: 0;}`);
+    GM_addStyle(`#reducers-modal td, th { padding: 4px 8px; color: white; }`);
+    GM_addStyle(`#reducers-modal th { user-select: none; }`);
+    GM_addStyle(`.paper-button {padding: 6px 16px; color: white;font-size: 14px; background-color: #484848; border:1px solid white; margin-right: 16px; }`);
+    GM_addStyle(`.paper-button:last-child {margin-right: 0; }`);
 
     injectStylesheet("https://cdnjs.cloudflare.com/ajax/libs/toastify-js/1.12.0/toastify.css");
-    appendReducers(document.getElementById("like-button-renderer"), "track");
+    const playerReducer = createReducer("track", {max: 100, min: 25, value: 100, skip: skipInterval});
+
+    playerReducer.addEventListener("change", (e) => {
+        const value = e.target.value;
+
+        const track = getCurrentTrack();
+        reducers[track.id] = {
+            id: track.id,
+            title: track.title,
+            artist: track.artist,
+            value
+        };
+
+        if (value >= 100) {
+            delete reducers[track.id];
+        }
+
+        GM_setValue("reducers", JSON.stringify(reducers));
+        setStatusText(`${track.title} (${track.id}) will play ${value}% of the time.`);
+    });
+
+    document.getElementById("like-button-renderer").after(playerReducer);
 
     /**
      * Observer for track changing. This was a pain to get right and I have no idea
@@ -992,7 +966,7 @@ function displayReducers() {
                 // current track title at that time.
                 setTimeout(() => {
                     track = getCurrentTrack();
-                    onTrackChange({lastTrack: this.lastTrack, currentTrack: track});
+                    onTrackChange({lastTrack: this.lastTrack, track});
                     this.lastTrack = track;
                 }, !this.lastTrack || this.lastTrack.title === track.title ? 500 : 1);
             } else {
